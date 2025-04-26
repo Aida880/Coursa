@@ -1,0 +1,127 @@
+#ui.r
+# Load required libraries
+require(leaflet)
+
+
+# Create a RShiny UI
+shinyUI(
+  fluidPage(padding=5,
+  titlePanel("Bike-sharing demand prediction app"), 
+  # Create a side-bar layout
+  sidebarLayout(
+    # Create a main panel to show cities on a leaflet map
+    mainPanel(
+      # leaflet output with id = 'city_bike_map', height = 1000
+      leafletOutput("city_bike_map", height = 1000, width = 1000)),
+    # Create a side bar to show detailed plots for a city
+    sidebarPanel(selectInput(inputId = "city_dropdown", 
+                              label = "Select a City:", 
+                              choices = c("All", "Seoul", "Suzhou", "London", 
+                                          "New York", "Paris"))
+      # select drop down list to select city
+    ))
+))
+
+#server.r
+# Install and import required libraries
+require(shiny)
+require(ggplot2)
+require(leaflet)
+require(tidyverse)
+require(httr)
+require(scales)
+# Import model_prediction R which contains methods to call OpenWeather API
+# and make predictions
+source("model_prediction.R")
+
+
+test_weather_data_generation<-function(){
+  city_weather_bike_df<-generate_city_weather_bike_data()
+  stopifnot(length(city_weather_bike_df)>0)
+  print(head(city_weather_bike_df))
+  return(city_weather_bike_df)
+}
+
+# Create a RShiny server
+shinyServer(function(input, output){
+  observeEvent(input$city_dropdown, {
+  # Define a city list
+  cities <- c("Seoul", "New York", "Paris", "Suzhou", "London")
+  # Define color factor
+  color_levels <- colorFactor(c("green", "yellow", "red"), 
+                              levels = c("small", "medium", "large"))
+  })
+  
+  # Test generate_city_weather_bike_data() function
+  city_weather_bike_df <- test_weather_data_generation()
+
+  # Create another data frame called `cities_max_bike` with each row contains city location info and max bike
+  # prediction for the city
+  cities_max_bike <- city_weather_bike_df %>%
+    filter(city %in% cities) %>%
+    group_by(city) %>%
+    summarize(max_bike_prediction = max(bike_prediction, na.rm = TRUE)) %>%
+    ungroup()
+  output$city_bike_map <- renderLeaflet({
+    leaflet(data = cities_max_bike) %>%
+      addTiles() %>%
+      setView(lng = 0, lat = 0, zoom = 2) %>%
+      addCircleMarkers(
+        lng = ~longitude,  # Replace with the actual longitude column name
+        lat = ~latitude,   # Replace with the actual latitude column name
+        radius = ~case_when(
+          BIKE_PREDICTION_LEVEL == "small" ~ 6,
+          BIKE_PREDICTION_LEVEL == "medium" ~ 10,
+          BIKE_PREDICTION_LEVEL == "large" ~ 12
+        ),
+        color = ~case_when(
+          BIKE_PREDICTION_LEVEL == "small" ~ "green",
+          BIKE_PREDICTION_LEVEL == "medium" ~ "yellow",
+          BIKE_PREDICTION_LEVEL == "large" ~ "red"
+        ),
+        popup = ~LABEL  # Replace with the actual column name for the label
+      )
+  })
+  # Observe drop-down event
+  selectInput("city_selector", "Select a City:", 
+              choices = c("All", "Seoul", "Suzhou", "London", "New York", "Paris"))
+  if (selected_city == "All") {
+    leafletProxy("city_bike_map") %>%
+      setView(lng = 0, lat = 0, zoom = 2) %>%
+      clearPopups() %>%
+      addCircleMarkers(
+        data = cities_max_bike,
+        lng = ~longitude,
+        lat = ~latitude,
+        radius = ~case_when(
+          BIKE_PREDICTION_LEVEL == "small" ~ 6,
+          BIKE_PREDICTION_LEVEL == "medium" ~ 10,
+          BIKE_PREDICTION_LEVEL == "large" ~ 12
+        ),
+        color = ~case_when(
+          BIKE_PREDICTION_LEVEL == "small" ~ "green",
+          BIKE_PREDICTION_LEVEL == "medium" ~ "yellow",
+          BIKE_PREDICTION_LEVEL == "large" ~ "red"
+        ),
+        popup = ~LABEL
+      )
+  } else {
+    city_data <- cities_max_bike %>% filter(city == selected_city)
+    leafletProxy("city_bike_map") %>%
+      setView(lng = city_data$longitude, lat = city_data$latitude, zoom = 12) %>%
+      clearPopups() %>%
+      addPopups(
+        lng = city_data$longitude,
+        lat = city_data$latitude,
+        popup = city_data$DETAILED_LABEL
+      )
+  }
+  # Then render output plots with an id defined in ui.R
+  
+  # If All was selected from dropdown, then render a leaflet map with circle markers
+  # and popup weather LABEL for all five cities
+  
+  # If just one specific city was selected, then render a leaflet map with one marker
+  # on the map and a popup with DETAILED_LABEL displayed
+  
+})
